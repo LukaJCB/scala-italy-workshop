@@ -1,6 +1,5 @@
 package workshop
 
-import com.sun.xml.internal.ws.policy.sourcemodel.ModelNode
 import simulacrum.typeclass
 import workshop.typeclasses._
 import workshop.abstractions.Monoidal
@@ -38,9 +37,17 @@ object monoids {
     def <<<[A, B, C](fbc: F[B, C], fab: F[A, B]): F[A, C] = compose(fab, fbc)
   }
 
-  implicit def categoryFunction: Category[Function1] = ???
+  implicit def categoryFunction: Category[Function1] = new Category[Function1] {
+    override def compose[A, B, C](fab: A => B, fbc: B => C): A => C = fab andThen fbc
 
-  implicit def monoidEndoCategory[F[_, _]: Category, A]: Monoid[F[A, A]] = ???
+    override def identity[A]: A => A = a => a
+  }
+
+  implicit def monoidEndoCategory[F[_, _] : Category, A]: Monoid[F[A, A]] = new Monoid[F[A, A]] {
+    override def empty: F[A, A] = Category[F].identity
+
+    override def combine(x: F[A, A], y: F[A, A]): F[A, A] = x >>> y
+  }
 
   def plusOne: Int => Int = _ + 1
 
@@ -49,7 +56,7 @@ object monoids {
   def plusOneTimes3: Int => Int = plusOne |+| times3
 
 
-  def plusOneTimes3ToString: Int => String = ???
+  def plusOneTimes3ToString: Int => String = plusOneTimes3ToString >>> (_.toString)
 
 
   // Different Category instances
@@ -59,7 +66,7 @@ object monoids {
 
 
   implicit def categoryOptionFunction: Category[OptionFunction] = new Category[OptionFunction] {
-    def identity[A]: OptionFunction[A, A] = ???
+    def identity[A]: OptionFunction[A, A] = OptionFunction[A, A](a => Some(a))
 
     def compose[A, B, C](fab: OptionFunction[A, B], fbc: OptionFunction[B, C]): OptionFunction[A, C] =
       OptionFunction { a =>
@@ -70,7 +77,12 @@ object monoids {
       }
   }
 
-  implicit def categoryEffectFunction: Category[EffectFunction] = ???
+  implicit def categoryEffectFunction: Category[EffectFunction] = new Category[EffectFunction] {
+    override def identity[A]: EffectFunction[A, A] = EffectFunction[A, A](a => a)
+
+    override def compose[A, B, C](fab: EffectFunction[A, B], fbc: EffectFunction[B, C]): EffectFunction[A, C] =
+      EffectFunction(a => fbc.apply(fab.apply(a)))
+  }
 
 
   // We can define real life synchronous programs without breaking referential transparency using EffectFunction
@@ -97,23 +109,44 @@ object monoids {
       f >>> fac >>> g
   }
 
-  implicit def profunctorEffectFunction: Profunctor[EffectFunction] = ???
+  implicit def profunctorEffectFunction: Profunctor[EffectFunction] = new Profunctor[EffectFunction] {
+    override def dimap[A, B, C, D](fac: EffectFunction[B, C])(f: A => B)(g: C => D): EffectFunction[A, D] = EffectFunction(f >>> fac.apply >>> g)
 
-  implicit def profunctorOptionFunction: Profunctor[OptionFunction] = ???
+  }
 
+  implicit def profunctorOptionFunction: Profunctor[OptionFunction] = new Profunctor[OptionFunction] {
+    override def dimap[A, B, C, D](fbc: OptionFunction[B, C])(f: A => B)(g: C => D): OptionFunction[A, D] = OptionFunction(a => {
+      fbc.apply(f.apply(a)) match {
+        case Some(v) => Some(g.apply(v))
+        case None => None
+      }
+    })
+  }
 
 
   // Now try to define an EffectFunction that prompts you to type your name,
   // then reads your name from stdin and outputs a greeting with your name.
   // To do so, you can use the `readLine` and `printLine` functions from `util`.
-  def consoleProgram = ???
+  def consoleProgram = firstStep >>> secondStep >>> thirdStep
 
+  def firstStep: EffectFunction[Unit, Unit] = util.printLine.lmap(_ => "Please type your name.")
+
+  def secondStep: EffectFunction[Unit, String] = util.readLine.rmap((input: String) => s"Hello $input!")
+
+  def thirdStep: EffectFunction[String, Unit] = util.printLine
 
   // We can define functions that might fail with a value
 
   case class FailFunction[A, B](apply: A => Either[Throwable, B])
 
-  implicit def categoryFailFunction: Category[FailFunction] = ???
+  implicit def categoryFailFunction: Category[FailFunction] = new Category[FailFunction] {
+    override def compose[A, B, C](fab: FailFunction[A, B], fbc: FailFunction[B, C]): FailFunction[A, C] = FailFunction(a => fab.apply(a) match {
+      case Right(b) => fbc.apply(b)
+      case Left(t) => Left(t)
+    })
+
+    override def identity[A]: FailFunction[A, A] = FailFunction[A, A](a => Right(a))
+  }
 
   implicit def profunctorFailFunction: Profunctor[FailFunction] = ???
 
@@ -133,13 +166,6 @@ object monoids {
   def fileProgram = ???
 
 
-
-
-
-
-
-
-
   // Tasks
 
   type Task[A] = FailFunction[Unit, A]
@@ -150,8 +176,6 @@ object monoids {
   type OptionTask[A] = OptionFunction[Unit, A]
 
   def optionCompose[A, B](ta: OptionTask[A])(f: OptionFunction[A, B]): OptionTask[B] = ???
-
-
 
 
   // Monad
@@ -175,21 +199,19 @@ object monoids {
   implicit def monadEither[E]: Monad[Either[E, ?]] = ???
 
 
-  def composeMonadFunctions[F[_]: Monad, A, B, C](x: A => F[B], y: B => F[C]): A => F[C] = ???
-
+  def composeMonadFunctions[F[_] : Monad, A, B, C](x: A => F[B], y: B => F[C]): A => F[C] = ???
 
 
   // Kleisli
 
   case class Kleisli[F[_], A, B](apply: A => F[B])
 
-  implicit def categoryKleisli[F[_]: Monad]: Category[Kleisli[F, ?, ?]] = ???
+  implicit def categoryKleisli[F[_] : Monad]: Category[Kleisli[F, ?, ?]] = ???
 
-  implicit def profunctorKleisli[F[_]: Monad]: Profunctor[Kleisli[F, ?, ?]] = ???
+  implicit def profunctorKleisli[F[_] : Monad]: Profunctor[Kleisli[F, ?, ?]] = ???
 
 
   // Now that we have Kleisli, go back and redefine OptionFunction and FailFunction as a special case of Kleisli
-
 
 
   // IO
